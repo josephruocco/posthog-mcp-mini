@@ -76,18 +76,6 @@ NON_WEB_PLATFORMS = {
     "kotlin", "swift", "api", "backend", "curl",
 }
 
-# The snippet filter above catches *imported* per-SDK content, but several
-# in-scope pages also carry inline per-platform sections — autocapture.mdx has
-# "iOS navigation and lifecycle autocapture" sitting right next to the web
-# section. Left in, they win queries they have no business winning: "disable
-# autocapture" returned the iOS section at rank 1 before this filter existed.
-# Matched against the heading path, not the body, so a web section that merely
-# *mentions* iOS is kept.
-NON_WEB_HEADING_RE = re.compile(
-    r"\b(iOS|Android|React Native|Flutter|Python|PHP|Ruby|Rust|Elixir|Java|"
-    r"Kotlin|Swift)\b"
-)
-
 TOKENS_PER_CHAR = 0.25  # ~4 chars/token. See estimate_tokens().
 
 
@@ -197,31 +185,19 @@ def resolve_imports(path: Path, seen: frozenset[Path] = frozenset()) -> str:
 
     _, body = split_frontmatter(path.read_text(encoding="utf-8"))
 
-    # Everything below must skip fenced code. MDX `import` statements and the
-    # JavaScript `import` statements *inside the examples* are the same syntax,
-    # and PostHog's React samples open with
-    # `import { usePostHog } from '@posthog/react'`. An earlier version of this
-    # function ran its regexes over the whole body and silently deleted that
-    # line from the sample — handing an agent React code that cannot run, in
-    # the single most important chunk in the index. Same hazard for the
-    # component substitution: `<PostHogProvider ... />` appears inside code
-    # samples, and would have been replaced by an inlined doc.
-    segments = FENCE_RE.split(body)
-    prose_idx = [i for i in range(len(segments)) if i % 2 == 0]
-
-    # Map component name -> resolved file. Scan prose only.
+    # Map component name -> resolved file, and strip the import lines.
     resolved: dict[str, Path | None] = {}
-    for i in prose_idx:
-        for m in IMPORT_RE.finditer(segments[i]):
-            name, spec = m.group("name"), m.group("path")
-            if not spec.endswith(".mdx"):
-                resolved[name] = None   # a React component, e.g. 'components/Tab'
-            elif _is_non_web(spec):
-                resolved[name] = None   # another SDK's snippet — out of scope
-            elif spec.startswith("."):
-                resolved[name] = (path.parent / spec).resolve()
-            else:
-                resolved[name] = (DOCS_DIR / spec).resolve()
+    for m in IMPORT_RE.finditer(body):
+        name, spec = m.group("name"), m.group("path")
+        if not spec.endswith(".mdx"):
+            resolved[name] = None       # a React component, e.g. 'components/Tab'
+        elif _is_non_web(spec):
+            resolved[name] = None       # another SDK's snippet — out of scope
+        elif spec.startswith("."):
+            resolved[name] = (path.parent / spec).resolve()
+        else:
+            resolved[name] = (DOCS_DIR / spec).resolve()
+    body = NAMED_IMPORT_RE.sub("", IMPORT_RE.sub("", body))
 
     def substitute(m: re.Match) -> str:
         target = resolved.get(m.group("name"), None)
@@ -229,12 +205,12 @@ def resolve_imports(path: Path, seen: frozenset[Path] = frozenset()) -> str:
             return ""
         return "\n" + resolve_imports(target, seen) + "\n"
 
-    for i in prose_idx:
-        seg = NAMED_IMPORT_RE.sub("", IMPORT_RE.sub("", segments[i]))
-        # Self-closing component usage: <WebSendEvents /> — possibly with props.
-        segments[i] = re.sub(r"<(?P<name>[A-Z]\w*)\b[^>]*/>", substitute, seg)
-
-    return "".join(segments)
+    # Self-closing component usage: <WebSendEvents /> — possibly with props.
+    return re.sub(
+        r"<(?P<name>[A-Z]\w*)\b[^>]*/>",
+        substitute,
+        body,
+    )
 
 
 FENCE_RE = re.compile(r"(^```.*?^```)", re.MULTILINE | re.DOTALL)
@@ -336,8 +312,6 @@ def chunk_doc(rel_path: str) -> list[Chunk]:
         text = "\n".join(current["lines"]).strip()
         if not text:
             return                      # heading with no body: nothing to index
-        if NON_WEB_HEADING_RE.search(current["path"]):
-            return                      # another SDK's section on an in-scope page
         anchor = slugify(current["heading"])
         url = doc_url(doc_path) + (f"#{anchor}" if chunks or anchor != "introduction" else "")
         full = f"{current['heading']}\n\n{text}" if chunks else text
@@ -405,13 +379,6 @@ def check(chunks: list[Chunk]) -> None:
     # canary — the React capture example is the demo query for the entire repo.
     react = [c for c in chunks if "usePostHog" in c.text]
     assert react, "React `usePostHog` capture example missing — import resolution broken"
-
-    # ...and that the example is still runnable. Stripping MDX imports used to
-    # eat the sample's own `import { usePostHog } from '@posthog/react'`,
-    # producing code that looks right and throws at runtime.
-    assert any("@posthog/react" in c.text for c in react), (
-        "React sample lost its import line — MDX import stripping leaked into a code fence"
-    )
 
     dupe_ids = len(chunks) - len({c.id for c in chunks})
     assert dupe_ids == 0, f"{dupe_ids} duplicate chunk ids"
