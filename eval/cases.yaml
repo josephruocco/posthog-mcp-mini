@@ -1,0 +1,140 @@
+# Ground truth for PostHog JS/Web SDK context retrieval.
+#
+# Every `gold` entry is a doc_path that genuinely answers the question — each
+# one was checked against the actual section inventory in data/index.json, not
+# guessed from the doc's name. Where several docs legitimately answer (PostHog
+# documents `identify` in three places), all of them count as correct; the
+# metric should not punish a system for picking a different valid source.
+#
+# `single_source: true` marks a restraint case. The question is narrow enough
+# that one doc fully answers it, so dragging in a second source is a failure
+# even though it costs nothing in hit-rate. These exist because recall-only
+# metrics reward over-retrieval, and over-retrieval is the exact behaviour this
+# project is arguing against. A system that returns everything scores 100% on
+# hit rate and is useless.
+
+- id: capture-custom-event-react
+  question: How do I capture a custom event in React?
+  gold: [product-analytics/capture-events, libraries/react]
+
+- id: capture-custom-event-properties
+  question: How do I send a custom event with properties in JavaScript?
+  gold: [product-analytics/capture-events, libraries/js/usage, getting-started/send-events]
+
+- id: install-npm
+  question: How do I install posthog-js with npm?
+  gold: [libraries/js]
+  single_source: true
+
+- id: install-script-tag
+  question: How do I add the PostHog JavaScript snippet to my HTML?
+  gold: [libraries/js]
+  single_source: true
+
+- id: react-provider
+  question: How do I set up the PostHogProvider in a React app?
+  gold: [libraries/react]
+  single_source: true
+
+- id: identify-user
+  question: How do I identify a logged in user?
+  gold: [product-analytics/identify, libraries/js/usage, getting-started/identify-users]
+
+- id: reset-on-logout
+  question: How do I reset the user when they log out?
+  gold: [product-analytics/identify, getting-started/identify-users, libraries/js/usage]
+
+- id: set-person-properties
+  question: How do I set person properties on a user?
+  gold: [product-analytics/person-properties, libraries/js/usage, product-analytics/identify]
+
+- id: set-vs-set-once
+  question: What is the difference between set and set_once for person properties?
+  gold: [product-analytics/person-properties]
+  single_source: true
+
+- id: disable-autocapture
+  question: How do I disable autocapture?
+  gold: [product-analytics/autocapture, libraries/js/config]
+
+- id: configure-autocapture-elements
+  question: How do I stop autocapture from tracking certain elements?
+  gold: [product-analytics/autocapture, libraries/js/config]
+
+- id: what-is-autocapture
+  question: What is autocapture and what events does it collect?
+  gold: [product-analytics/autocapture]
+  single_source: true
+
+- id: super-properties
+  question: How do I register super properties that get sent with every event?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: unregister-super-property
+  question: How do I remove a stored super property?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: send-beacon-unload
+  question: How do I make sure an event is sent before the page unloads?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: persistence-cookie-localstorage
+  question: How do I change PostHog persistence from cookies to localStorage?
+  gold: [libraries/js/persistence, libraries/js/config]
+
+- id: cross-subdomain
+  question: How do I track the same user across subdomains?
+  gold: [libraries/js/persistence, libraries/js]
+
+- id: debug-mode
+  question: How do I enable debug mode in the browser?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: opt-out
+  question: How do I opt a user out of tracking?
+  gold: [libraries/js, libraries/js/usage]
+
+- id: anonymous-vs-identified
+  question: What is the difference between anonymous and identified events?
+  gold: [libraries/js/usage, product-analytics/identify]
+
+- id: alias
+  question: How do I use alias to link two distinct IDs?
+  gold: [product-analytics/identify, libraries/js/usage]
+
+- id: typescript-window-posthog
+  question: How do I get TypeScript types for window.posthog with the script tag?
+  gold: [libraries/js/types]
+  single_source: true
+
+- id: pin-snippet-version
+  question: How do I pin the PostHog snippet to a specific version?
+  gold: [libraries/js/snippet-versioning]
+  single_source: true
+
+- id: sample-events
+  question: How do I sample events before they are sent?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: redact-sensitive-data
+  question: How do I redact sensitive information from events before sending?
+  gold: [libraries/js/usage]
+  single_source: true
+
+- id: rageclick
+  question: How do I configure rage click detection?
+  gold: [libraries/js/config, product-analytics/autocapture]
+
+- id: heatmaps
+  question: How do I enable heatmap data collection?
+  gold: [product-analytics/autocapture, libraries/js/config]
+
+- id: group-analytics
+  question: How do I associate events with a company or group?
+  gold: [libraries/js/usage]
+  single_source: true
