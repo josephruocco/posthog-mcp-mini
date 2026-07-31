@@ -76,6 +76,18 @@ NON_WEB_PLATFORMS = {
     "kotlin", "swift", "api", "backend", "curl",
 }
 
+# The snippet filter above catches *imported* per-SDK content, but several
+# in-scope pages also carry inline per-platform sections — autocapture.mdx has
+# "iOS navigation and lifecycle autocapture" sitting right next to the web
+# section. Left in, they win queries they have no business winning: "disable
+# autocapture" returned the iOS section at rank 1 before this filter existed.
+# Matched against the heading path, not the body, so a web section that merely
+# *mentions* iOS is kept.
+NON_WEB_HEADING_RE = re.compile(
+    r"\b(iOS|Android|React Native|Flutter|Python|PHP|Ruby|Rust|Elixir|Java|"
+    r"Kotlin|Swift)\b"
+)
+
 TOKENS_PER_CHAR = 0.25  # ~4 chars/token. See estimate_tokens().
 
 
@@ -312,6 +324,8 @@ def chunk_doc(rel_path: str) -> list[Chunk]:
         text = "\n".join(current["lines"]).strip()
         if not text:
             return                      # heading with no body: nothing to index
+        if NON_WEB_HEADING_RE.search(current["path"]):
+            return                      # another SDK's section on an in-scope page
         anchor = slugify(current["heading"])
         url = doc_url(doc_path) + (f"#{anchor}" if chunks or anchor != "introduction" else "")
         full = f"{current['heading']}\n\n{text}" if chunks else text
