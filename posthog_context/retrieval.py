@@ -211,17 +211,27 @@ def load() -> DocIndex:
 
 if __name__ == "__main__":
     ix = load()
-    # Retrieval sanity check: each query must surface its obvious home doc.
+    # Retrieval sanity check: each query must surface at least one doc that
+    # genuinely answers it. Stated as a set rather than a single path, matching
+    # how eval/cases.yaml labels ground truth — PostHog documents `identify` and
+    # event capture in several places, and demanding one specific file would
+    # make this check fail on a correct answer. It did exactly that once: this
+    # asserted on `libraries/react` for the React capture query, and started
+    # failing when stemming (correctly) promoted `capture-events` above it.
     expectations = [
-        ("capture a custom event in react", "libraries/react"),
-        ("disable autocapture", "product-analytics/autocapture"),
-        ("identify a user", "product-analytics/identify"),
-        ("install posthog-js with npm", "libraries/js"),
+        ("capture a custom event in react",
+         {"libraries/react", "product-analytics/capture-events"}),
+        ("disable autocapture",
+         {"product-analytics/autocapture", "libraries/js/config"}),
+        ("identify a user",
+         {"product-analytics/identify", "getting-started/identify-users",
+          "libraries/js/usage"}),
+        ("install posthog-js with npm", {"libraries/js"}),
     ]
     for q, expected in expectations:
         hits = ix.search(q, k=5)
-        paths = [h.doc_path for h in hits]
-        assert expected in paths, f"{q!r} -> {paths}, expected {expected}"
+        paths = {h.doc_path for h in hits}
+        assert paths & expected, f"{q!r} -> {sorted(paths)}, expected one of {expected}"
         print(f"ok  {q!r}\n    {hits[0].heading_path}  ({hits[0].score})")
 
     assert ix.get_doc("libraries/js/usage")["tokens"] > 1000

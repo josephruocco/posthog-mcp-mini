@@ -51,6 +51,15 @@ NEAR_DUPLICATE_JACCARD = 0.6
 # grows as the fourth root, so a 1,300-token section is docked ~20%, not ~60%.
 LENGTH_FREE_TOKENS = 500
 
+# ...and below *this* length a passage is penalised for being too small to be
+# an answer. Usefulness is concave in length, not decreasing: a 28-token
+# section headed "Installation" that reads `npm install @posthog/types` is a
+# perfect lexical match for "how do I install posthog-js with npm" and tells
+# the reader nothing. It beat the canonical 1,240-token install section until
+# this factor existed. Long passages waste budget; short ones waste the whole
+# request.
+MIN_USEFUL_TOKENS = 120
+
 
 @dataclass
 class Passage:
@@ -103,6 +112,10 @@ FRAMEWORK_TERMS = {
     "react": re.compile(r"(\breact\b|\bjsx\b|usePostHog|PostHogProvider|@posthog/react)", re.I),
     "html": re.compile(r"\b(html|vanilla|script tag|plain js|no framework)\b", re.I),
 }
+
+# Bindings libraries, as opposed to the core SDK. Used to break ties toward the
+# neutral docs when the question names no framework.
+FRAMEWORK_SPECIFIC = {"react"}
 
 STAGE_SETUP, STAGE_API, STAGE_EXAMPLE = 0, 1, 2
 
@@ -183,6 +196,14 @@ def rescore(results: list[Result], task: str) -> list[Passage]:
                 # Actively demote the *other* framework's version of the same
                 # section. This is the "React question, vanilla answer" bug.
                 value *= 0.60
+        elif any(FRAMEWORK_TERMS[n].search(r.heading_path) for n in FRAMEWORK_SPECIFIC):
+            # The symmetric case, which the first version missed. If the user
+            # named no framework, the framework-agnostic doc is the better
+            # answer — "how do I install posthog-js with npm" was returning
+            # React's install section, which is correct code for a question
+            # nobody asked. Only bindings libraries count as framework-specific;
+            # the vanilla JS docs are the neutral default, not a competitor.
+            value *= 0.85
 
         # Mild length discipline. Not a hard penalty — some of the best
         # passages are long — but between two comparable candidates the
@@ -195,6 +216,10 @@ def rescore(results: list[Result], task: str) -> list[Passage]:
         # factor only needs to break ties — hence the fourth root, which is
         # nearly flat until a passage is genuinely bloated.
         value *= (LENGTH_FREE_TOKENS / max(LENGTH_FREE_TOKENS, r.tokens)) ** 0.25
+
+        # The other end of the curve: too short to stand on its own.
+        if r.tokens < MIN_USEFUL_TOKENS:
+            value *= r.tokens / MIN_USEFUL_TOKENS
 
         passages.append(Passage(result=r, value=value, stage=classify_stage(r)))
 
