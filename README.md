@@ -8,6 +8,8 @@ deduplicated, cited passages. Wire a retriever straight to a tool and dump the
 top five chunks, and the same question costs about 2,650 tokens. Both find a
 correct doc every time.
 
+![the CLI comparing a naive dump against the assembled block](demo.gif)
+
 ![naive vs engineered](eval/out/comparison.png)
 
 | metric | naive top-5 | naive (budgeted) | **engineered** | better |
