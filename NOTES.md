@@ -97,3 +97,83 @@ populated and the damage surfaces as bad retrieval three milestones later.
 (The leaked-import check needed its own fix: `import posthog from 'posthog-js'`
 *inside a fence* is the install instruction, not scaffolding. It only inspects
 prose now.)
+
+## M2: retrieval
+
+**Two BM25 fields, not one boosted field.** First implementation repeated
+heading tokens into the body to boost them. That inflates document length, BM25
+normalises by length, and short chunks then get rewarded twice — a 219-token
+aside titled "Reset on logout" beat the canonical custom-event section for "how
+do I capture a custom event in React". Heading and body are now separate
+indexes, summed with `HEADING_WEIGHT = 1.6`. Also dropped `b` to 0.45: our
+chunks are heading-scoped and fairly uniform, so the default 0.75 over-rewards
+terse sections.
+
+**Stemming is load-bearing.** Without it "capture a custom event" does not match
+"Capturing custom events" — `capture`/`capturing` and `event`/`events` are
+unrelated strings. The most important chunk in the index sat outside the top 24
+for the project's own demo query. Added `snowballstemmer`: pure Python, zero
+transitive dependencies. Chose a real stemmer over a hand-rolled suffix stripper
+because the edge cases (property/properties, identify/identifying) are exactly
+where suffix strippers fail.
+
+**Query stopwords.** "how do I ..." contributes nothing, and `a` matches
+constantly because the docs discuss the `<a>` tag.
+
+## M3: the assembler
+
+**Selection is by value; ordering is presentational.** Install → API → example
+is applied to whatever survived selection, rather than forcing an install
+passage into every answer. This matters for restraint: "how do I disable
+autocapture" shouldn't get an install section just because the template wants
+one.
+
+**The budget is measured, not estimated.** Summing per-passage estimates drifted
+— separators between rendered parts don't appear in the parts, and
+`estimate_tokens` rounds up per call. The first version overshot an 800-token
+budget by 16. Now a single `render()` prices candidates and emits the final
+block, plus a closing loop that measures the real string and trims until it
+fits. "Never blow the budget" is a hard requirement, not a target.
+
+**Truncation only at block boundaries.** Cutting at a token offset can end a
+passage mid-code-fence, which is worse than omitting it — the agent may complete
+an unterminated example by guessing.
+
+## M4: what the eval caught
+
+Three configs, not two. The third — naive ranking truncated to the same
+800-token ceiling — exists so the engineered config earns no credit merely for
+being allowed to stop. It is genuinely smaller (461 vs 678 mean tokens) and pays
+with a 79% hit rate.
+
+Two assembler bugs that inspection had missed:
+
+- **Length penalty was monotonic.** A 28-token section headed "Installation"
+  reading `npm install @posthog/types` is a perfect lexical match for "how do I
+  install posthog-js with npm" and tells the reader nothing. It beat the
+  canonical 1,240-token install section. Usefulness is *concave* in length:
+  long passages waste budget, short ones waste the request.
+- **Framework routing was asymmetric.** It fired only when a framework was
+  named. A neutral query got React's install section — correct code for a
+  question nobody asked. Added the symmetric rule preferring framework-agnostic
+  docs when no framework is mentioned.
+
+**Overfitting risk, stated plainly.** Constants were tuned while watching 28
+cases. Mitigation was to only make changes justifiable from principle rather
+than from the score moving. A held-out set would be the honest next step.
+
+## M5: the bug found by reading real output
+
+Wiring `how_do_i` into the server and actually reading a tool response exposed
+silent corruption nothing else caught. MDX `import` statements and the
+JavaScript `import` statements *inside code samples* are the same syntax, and
+`resolve_imports` ran over the whole body — deleting
+`import { usePostHog } from '@posthog/react'` from inside the fence. The single
+most important chunk was serving React code that cannot run. `resolve_imports`
+now skips fenced code the same way `strip_jsx` always did, and the ingest
+asserts the sample keeps its import.
+
+Worth recording as a pattern: the fence-protection bug existed in `strip_jsx`
+from the start and was fixed there, but the same hazard in `resolve_imports`
+went unnoticed for three milestones because its output still *looked* like
+valid markdown.
