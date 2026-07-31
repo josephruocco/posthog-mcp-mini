@@ -21,7 +21,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import snowballstemmer
 from rank_bm25 import BM25Okapi
+
+# Pure-Python, zero transitive dependencies. A real stemmer rather than a
+# hand-rolled suffix stripper because the edge cases are where suffix strippers
+# embarrass themselves: property/properties, identify/identifying.
+_STEMMER = snowballstemmer.stemmer("english")
 
 INDEX_PATH = Path(__file__).resolve().parent.parent / "data" / "index.json"
 
@@ -32,9 +38,31 @@ CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 # Headings are a strong prior — a section literally titled "Custom event
 # capture" is a better answer to "how do I capture a custom event" than a
-# passing mention buried in prose. Repeating heading terms is the crudest
-# possible field boost, and for 189 chunks it's entirely sufficient.
-HEADING_BOOST = 3
+# passing mention buried in prose.
+#
+# The obvious implementation is to repeat heading tokens into the body and
+# index once. Don't. Repeating tokens inflates the document *length*, and BM25
+# normalises by length, so short chunks get boosted twice — once for the
+# repetition and again for being short. In practice a 219-token aside called
+# "Reset on logout" outscored the canonical custom-event section for the query
+# "how do I capture a custom event in React". Two fields, scored separately and
+# summed, keeps heading evidence out of the body's length statistics.
+HEADING_WEIGHT = 1.6
+
+# BM25's `b` controls how hard short documents are rewarded. The default 0.75
+# is tuned for web pages of wildly varying length; our chunks are already
+# heading-scoped and fairly uniform, and aggressive normalisation just
+# surfaces terse asides over substantive sections.
+BM25_B = 0.45
+
+# Query-side stopwords. "how do I ..." is how developers phrase questions and
+# contributes nothing but noise — `a` in particular matches PostHog's docs
+# constantly, because they discuss the `<a>` tag.
+STOPWORDS = frozenset("""
+a an the do does did how what when where which who why is are was were be been
+being i you it its this that these those to of in on at for with from by as or
+and if then than my me we our your can could should would will shall may might
+""".split())
 
 
 @dataclass
@@ -53,11 +81,20 @@ class Result:
 
 
 def tokenize(text: str) -> list[str]:
-    """Lowercase word tokens, with compound identifiers also split apart.
+    """Lowercase, stemmed word tokens, with compound identifiers split apart.
 
     `capture_pageview` yields ["capture_pageview", "capture", "pageview"] —
     keeping the whole token *and* its parts, so an exact query for the config
     key still outranks a doc that merely discusses pageviews.
+
+    Stemming is not optional here, which I learned the hard way. Without it,
+    the query "capture a custom event" does not match a section headed
+    "Capturing custom events": `capture`/`capturing` and `event`/`events` are
+    unrelated strings to BM25. The single most important chunk in the whole
+    index was falling outside the top 24 candidates for the repo's own demo
+    query. Docs headings are written in the gerund and the plural; developer
+    questions are written in the infinitive and the singular. Something has to
+    bridge that, and a stemmer is the cheapest thing that does.
     """
     text = CAMEL_BOUNDARY.sub(" ", text)
     tokens: list[str] = []
@@ -65,20 +102,27 @@ def tokenize(text: str) -> list[str]:
         tokens.append(tok)
         if "_" in tok:
             tokens.extend(part for part in tok.split("_") if part)
-    return tokens
+    return _STEMMER.stemWords(tokens)
 
 
 class DocIndex:
     def __init__(self, chunks: list[dict]) -> None:
         self.chunks = chunks
-        corpus = [
-            tokenize(c["heading_path"]) * HEADING_BOOST + tokenize(c["text"])
-            for c in chunks
-        ]
-        self.bm25 = BM25Okapi(corpus)
+        # Two fields, two indexes. See HEADING_WEIGHT for why this isn't just
+        # heading tokens concatenated into the body.
+        self.bm25_body = BM25Okapi([tokenize(c["text"]) for c in chunks], b=BM25_B)
+        self.bm25_head = BM25Okapi(
+            [tokenize(c["heading_path"]) for c in chunks], b=BM25_B
+        )
+
+    def score(self, query: str):
+        q = [t for t in tokenize(query) if t not in STOPWORDS]
+        if not q:                       # query was nothing but stopwords
+            q = tokenize(query)
+        return self.bm25_body.get_scores(q) + HEADING_WEIGHT * self.bm25_head.get_scores(q)
 
     def search(self, query: str, k: int = 5) -> list[Result]:
-        scores = self.bm25.get_scores(tokenize(query))
+        scores = self.score(query)
         ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
         results = []
         for i in ranked[:k]:
