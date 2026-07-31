@@ -38,6 +38,8 @@ def main() -> None:
     ap.add_argument("--budget", type=int, default=800, help="token budget (default 800)")
     ap.add_argument("-k", type=int, default=5, help="naive baseline top-k (default 5)")
     ap.add_argument("--quiet", action="store_true", help="skip the comparison header")
+    ap.add_argument("--stats", action="store_true",
+                    help="comparison only, without the assembled block")
     args = ap.parse_args()
 
     index = load()
@@ -73,6 +75,9 @@ def main() -> None:
                                 for k, v in block.dropped.items())
             print()
             print(c(GREY, f"  {'withheld':<{pad}}{dropped}"))
+        if args.stats:
+            print()
+            return
         print()
         print(c(GREY, "  " + "─" * 68))
         print()
