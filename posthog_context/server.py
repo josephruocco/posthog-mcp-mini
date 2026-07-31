@@ -16,6 +16,7 @@ from __future__ import annotations
 from mcp.server import MCPServer
 
 from . import retrieval
+from .assemble import how_do_i as assemble_context
 
 server = MCPServer(
     name="posthog-context",
@@ -75,6 +76,31 @@ def get_posthog_doc(path_or_slug: str) -> dict:
             "hint": "Try search_posthog_docs to find the right path.",
         }
     return doc
+
+
+@server.tool(
+    description=(
+        "Answer a 'how do I X with PostHog?' task with an assembled context "
+        "block: the minimal set of deduplicated, ordered, cited passages that "
+        "answer it, within a token budget. Prefer this over search for any "
+        "implementation question — it returns roughly a quarter the tokens of "
+        "a raw top-k dump with materially higher precision. Pass the task in "
+        "natural language, and mention the framework if you know it ('in "
+        "React') so the right variant is selected."
+    )
+)
+def how_do_i(task: str, token_budget: int = 800) -> dict:
+    """Assembled, budgeted, cited context for a task."""
+    block = assemble_context(task, token_budget=token_budget)
+    return {
+        "context": block.markdown,
+        "sources": block.sources,
+        "tokens": block.tokens,
+        "token_budget": token_budget,
+        # Surfaced so the agent can tell "one source because that's the whole
+        # answer" apart from "one source because retrieval fell over".
+        "filtered": block.dropped,
+    }
 
 
 def main() -> None:

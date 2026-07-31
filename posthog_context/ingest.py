@@ -197,19 +197,31 @@ def resolve_imports(path: Path, seen: frozenset[Path] = frozenset()) -> str:
 
     _, body = split_frontmatter(path.read_text(encoding="utf-8"))
 
-    # Map component name -> resolved file, and strip the import lines.
+    # Everything below must skip fenced code. MDX `import` statements and the
+    # JavaScript `import` statements *inside the examples* are the same syntax,
+    # and PostHog's React samples open with
+    # `import { usePostHog } from '@posthog/react'`. An earlier version of this
+    # function ran its regexes over the whole body and silently deleted that
+    # line from the sample — handing an agent React code that cannot run, in
+    # the single most important chunk in the index. Same hazard for the
+    # component substitution: `<PostHogProvider ... />` appears inside code
+    # samples, and would have been replaced by an inlined doc.
+    segments = FENCE_RE.split(body)
+    prose_idx = [i for i in range(len(segments)) if i % 2 == 0]
+
+    # Map component name -> resolved file. Scan prose only.
     resolved: dict[str, Path | None] = {}
-    for m in IMPORT_RE.finditer(body):
-        name, spec = m.group("name"), m.group("path")
-        if not spec.endswith(".mdx"):
-            resolved[name] = None       # a React component, e.g. 'components/Tab'
-        elif _is_non_web(spec):
-            resolved[name] = None       # another SDK's snippet — out of scope
-        elif spec.startswith("."):
-            resolved[name] = (path.parent / spec).resolve()
-        else:
-            resolved[name] = (DOCS_DIR / spec).resolve()
-    body = NAMED_IMPORT_RE.sub("", IMPORT_RE.sub("", body))
+    for i in prose_idx:
+        for m in IMPORT_RE.finditer(segments[i]):
+            name, spec = m.group("name"), m.group("path")
+            if not spec.endswith(".mdx"):
+                resolved[name] = None   # a React component, e.g. 'components/Tab'
+            elif _is_non_web(spec):
+                resolved[name] = None   # another SDK's snippet — out of scope
+            elif spec.startswith("."):
+                resolved[name] = (path.parent / spec).resolve()
+            else:
+                resolved[name] = (DOCS_DIR / spec).resolve()
 
     def substitute(m: re.Match) -> str:
         target = resolved.get(m.group("name"), None)
@@ -217,12 +229,12 @@ def resolve_imports(path: Path, seen: frozenset[Path] = frozenset()) -> str:
             return ""
         return "\n" + resolve_imports(target, seen) + "\n"
 
-    # Self-closing component usage: <WebSendEvents /> — possibly with props.
-    return re.sub(
-        r"<(?P<name>[A-Z]\w*)\b[^>]*/>",
-        substitute,
-        body,
-    )
+    for i in prose_idx:
+        seg = NAMED_IMPORT_RE.sub("", IMPORT_RE.sub("", segments[i]))
+        # Self-closing component usage: <WebSendEvents /> — possibly with props.
+        segments[i] = re.sub(r"<(?P<name>[A-Z]\w*)\b[^>]*/>", substitute, seg)
+
+    return "".join(segments)
 
 
 FENCE_RE = re.compile(r"(^```.*?^```)", re.MULTILINE | re.DOTALL)
@@ -393,6 +405,13 @@ def check(chunks: list[Chunk]) -> None:
     # canary — the React capture example is the demo query for the entire repo.
     react = [c for c in chunks if "usePostHog" in c.text]
     assert react, "React `usePostHog` capture example missing — import resolution broken"
+
+    # ...and that the example is still runnable. Stripping MDX imports used to
+    # eat the sample's own `import { usePostHog } from '@posthog/react'`,
+    # producing code that looks right and throws at runtime.
+    assert any("@posthog/react" in c.text for c in react), (
+        "React sample lost its import line — MDX import stripping leaked into a code fence"
+    )
 
     dupe_ids = len(chunks) - len({c.id for c in chunks})
     assert dupe_ids == 0, f"{dupe_ids} duplicate chunk ids"
